@@ -6,6 +6,8 @@ import java.io.StringReader;
 import java.util.Arrays;
 import java.util.StringTokenizer;
 
+import javax.naming.Context;
+
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.Writable;
@@ -100,7 +102,10 @@ public class ProductAnalyzer {
     }
   }
 
+  final long MAX_SPLIT_SIZE = 64 * 1024 * 1024;
+
   public static void main(String[] args) throws Exception {
+    long startTime = System.nanoTime();
     Configuration conf = new Configuration();
     Job job = Job.getInstance(conf, "product analyzer");
     job.setJarByClass(ProductAnalyzer.class);
@@ -111,6 +116,10 @@ public class ProductAnalyzer {
     job.setOutputValueClass(ProductResult.class);
     FileInputFormat.addInputPath(job, new Path(args[0]));
     FileOutputFormat.setOutputPath(job, new Path(args[1]));
-    System.exit(job.waitForCompletion(true) ? 0 : 1);
+    int res = job.waitForCompletion(true) ? 0 : 1;
+    long endTime = System.nanoTime();
+    long duration = (endTime - startTime) / 1000000;
+    System.out.printf("Took %d ms", duration);
+    System.exit(res);
   }
 }

@@ -6,8 +6,6 @@ import java.io.StringReader;
 import java.util.Arrays;
 import java.util.StringTokenizer;
 
-import javax.naming.Context;
-
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.Writable;
@@ -69,20 +67,19 @@ public class ProductAnalyzer {
     private Text category = new Text();
 
     public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
-      BufferedReader bufReader = new BufferedReader(new StringReader(value.toString()));
-      String line = null;
-      bufReader.readLine(); // Skip first line
-      while ((line = bufReader.readLine()) != null) {
-        String[] values = line.split(",");
+      try {
+        String[] values = value.toString().split(",");
         int transaction_id = Integer.parseInt(values[0]);
         int product_id = Integer.parseInt(values[1]);
-        category.set(values[1]);
+        category.set(values[2]);
         double price = Double.parseDouble(values[3]);
         int quantity = Integer.parseInt(values[4]);
 
         result.setQuantity(quantity);
         result.setRevenue(price * quantity);
         context.write(category, result);
+      } catch (Exception e) {
+        // Ignore parsing errors
       }
     }
   }

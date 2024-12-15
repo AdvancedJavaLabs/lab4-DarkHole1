@@ -58,6 +58,10 @@ public class ProductAnalyzer {
       res.readFields(in);
       return res;
     }
+
+    public String toString() {
+      return String.format("%.2f\t%d", revenue, quantity);
+    }
   }
 
   public static class ProductResultMapper

@@ -6,12 +6,11 @@ import java.io.StringReader;
 import java.util.Arrays;
 import java.util.StringTokenizer;
 
-import javax.naming.Context;
-
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.Writable;
 import org.apache.hadoop.io.IntWritable;
+import org.apache.hadoop.io.DoubleWritable;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.mapreduce.Mapper;
@@ -21,15 +20,21 @@ import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 
 public class ProductAnalyzer {
   public static class ProductResult implements Writable {
+    private String category;
     private int quantity;
     private double revenue;
 
     ProductResult() {
     }
 
-    ProductResult(int quantity, double revenue) {
+    ProductResult(String category, int quantity, double revenue) {
+      this.category = category;
       this.quantity = quantity;
       this.revenue = revenue;
+    }
+
+    public void setCategory(String category) {
+      this.category = category;
     }
 
     public void setQuantity(int quantity) {
@@ -41,16 +46,19 @@ public class ProductAnalyzer {
     }
 
     public void add(ProductResult other) {
+      category = other.category;
       quantity += other.quantity;
       revenue += other.revenue;
     }
 
     public void write(DataOutput out) throws IOException {
+      out.writeUTF(category);
       out.writeInt(quantity);
       out.writeDouble(revenue);
     }
 
     public void readFields(DataInput in) throws IOException {
+      category = in.readUTF();
       quantity = in.readInt();
       revenue = in.readDouble();
     }
@@ -81,12 +89,38 @@ public class ProductAnalyzer {
         double price = Double.parseDouble(values[3]);
         int quantity = Integer.parseInt(values[4]);
 
+        result.setCategory(category.toString());
         result.setQuantity(quantity);
         result.setRevenue(price * quantity);
         context.write(category, result);
       } catch (Exception e) {
         // Ignore parsing errors
       }
+    }
+  }
+
+  public static class KeySwapperMapper
+      extends Mapper<Object, Text, DoubleWritable, ProductResult> {
+
+    private ProductResult result = new ProductResult();
+    private DoubleWritable revenue = new DoubleWritable();
+
+    public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
+      // try {
+        String[] values = value.toString().split("\t");
+        String category = values[0];
+        double revenue = Double.parseDouble(values[1]);
+        int quantity = Integer.parseInt(values[2]);
+
+        result.setCategory(category);
+        result.setQuantity(quantity);
+        result.setRevenue(revenue);
+        this.revenue.set(revenue);
+        context.write(this.revenue, result);
+      // } catch (Exception e) {
+        // Ignore parsing errors
+        // System.out.println("!!! error " + e);
+      // }
     }
   }
 
@@ -102,21 +136,48 @@ public class ProductAnalyzer {
     }
   }
 
-  final long MAX_SPLIT_SIZE = 64 * 1024 * 1024;
+  public static class SwapperReducer
+      extends Reducer<DoubleWritable, ProductResult, Text, ProductResult> {
+    public void reduce(Text key, Iterable<ProductResult> values,
+        Context context) throws IOException, InterruptedException {
+      Text category = new Text();
+      for (ProductResult val : values) {
+        category.set(val.category);
+        context.write(category, val);
+      }
+    }
+  }
 
   public static void main(String[] args) throws Exception {
     long startTime = System.nanoTime();
-    Configuration conf = new Configuration();
-    Job job = Job.getInstance(conf, "product analyzer");
-    job.setJarByClass(ProductAnalyzer.class);
-    job.setMapperClass(ProductResultMapper.class);
-    job.setCombinerClass(ProductResultReducer.class);
-    job.setReducerClass(ProductResultReducer.class);
-    job.setOutputKeyClass(Text.class);
-    job.setOutputValueClass(ProductResult.class);
-    FileInputFormat.addInputPath(job, new Path(args[0]));
-    FileOutputFormat.setOutputPath(job, new Path(args[1]));
-    int res = job.waitForCompletion(true) ? 0 : 1;
+    int splitSize = Integer.parseInt(args[3]);
+    
+    Configuration conf1 = new Configuration();
+    conf1.setLong(FileInputFormat.SPLIT_MAXSIZE, splitSize * 1024 * 1024);
+    Job job1 = Job.getInstance(conf1, "product analyzer");
+    job1.setJarByClass(ProductAnalyzer.class);
+    job1.setMapperClass(ProductResultMapper.class);
+    job1.setCombinerClass(ProductResultReducer.class);
+    job1.setReducerClass(ProductResultReducer.class);
+    job1.setOutputKeyClass(Text.class);
+    job1.setOutputValueClass(ProductResult.class);
+    FileInputFormat.addInputPath(job1, new Path(args[0]));
+    FileOutputFormat.setOutputPath(job1, new Path(args[1]));
+    job1.waitForCompletion(true);
+
+    Configuration conf2 = new Configuration();
+    conf2.setLong(FileInputFormat.SPLIT_MAXSIZE, splitSize * 1024 * 1024);
+    Job job2 = Job.getInstance(conf2, "product sort");
+    job2.setJarByClass(ProductAnalyzer.class);
+    job2.setMapperClass(KeySwapperMapper.class);
+    job2.setCombinerClass(SwapperReducer.class);
+    job2.setReducerClass(SwapperReducer.class);
+    job2.setOutputKeyClass(DoubleWritable.class);
+    job2.setOutputValueClass(ProductResult.class);
+    FileInputFormat.addInputPath(job2, new Path(args[1]));
+    FileOutputFormat.setOutputPath(job2, new Path(args[2]));
+    int res = job2.waitForCompletion(true) ? 0 : 1;
+    
     long endTime = System.nanoTime();
     long duration = (endTime - startTime) / 1000000;
     System.out.printf("Took %d ms", duration);
